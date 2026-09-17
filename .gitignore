@@ -1,6 +1,17 @@
 # Claude local workspace (docs/, data/, skills/)
 .claude/
 
+# Persistence layer (data/ is the venue's runtime store, parallel to src/)
+# Secret: never commit API keys
+data/config/api_keys.json
+# Generated runtime state — the directory skeleton is kept via .gitkeep
+data/journal/*
+data/snapshots/*
+data/state/*
+!data/journal/.gitkeep
+!data/snapshots/.gitkeep
+!data/state/.gitkeep
+
 # Virtual environments
 .venv/
 venv/
