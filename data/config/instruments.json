@@ -1,0 +1,12 @@
+{
+  "USDCAD": {
+    "base": "USD",
+    "quote": "CAD",
+    "tick_size": 1,
+    "lot_size": 100,
+    "min_qty": 100,
+    "max_qty": 100000000,
+    "price_band_pct": 10,
+    "market_buy_max_notional": 10000000
+  }
+}

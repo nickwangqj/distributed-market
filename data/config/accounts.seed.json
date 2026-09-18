@@ -1,0 +1,12 @@
+[
+  {
+    "account_id": "acct_0001",
+    "label": "alice",
+    "balances": { "USD": 100000000, "CAD": 137500000 }
+  },
+  {
+    "account_id": "acct_0002",
+    "label": "bob",
+    "balances": { "USD": 100000000, "CAD": 137500000 }
+  }
+]
