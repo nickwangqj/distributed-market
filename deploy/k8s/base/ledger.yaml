@@ -1,0 +1,86 @@
+# The ledger owns balances, so it is single-replica with a volume of its own — not shared with
+# the engine (.claude/docs/06-persistence.md §11). `Recreate` keeps two writers off that volume
+# during a rollout.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ledger-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledger
+  labels:
+    app.kubernetes.io/name: ledger
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ledger
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ledger
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+        - name: ledger
+          image: dm-ledger:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: dm-config
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: fixtures
+              mountPath: /data/config
+              readOnly: true
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            # Phase 8: readiness becomes "caught up to the engine's seq".
+            failureThreshold: 30
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: ledger-data
+        - name: fixtures
+          configMap:
+            name: dm-fixtures
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledger
+spec:
+  selector:
+    app.kubernetes.io/name: ledger
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

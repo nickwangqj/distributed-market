@@ -1,0 +1,67 @@
+# Derived state only: no volume, no authority, disposable. Two replicas from the start, because
+# per-pod eventual consistency is an accepted property (.claude/docs/07-market-data.md §9) and
+# running one replica would hide it until production.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: marketdata
+  labels:
+    app.kubernetes.io/name: marketdata
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: marketdata
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: marketdata
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+      containers:
+        - name: marketdata
+          image: dm-marketdata:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: dm-config
+          volumeMounts:
+            - name: fixtures
+              mountPath: /data/config
+              readOnly: true
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            # Phase 10: readiness becomes "caught up to the engine and holding a snapshot".
+            failureThreshold: 30
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+      volumes:
+        - name: fixtures
+          configMap:
+            name: dm-fixtures
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: marketdata
+spec:
+  selector:
+    app.kubernetes.io/name: marketdata
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

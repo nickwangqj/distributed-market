@@ -5,6 +5,7 @@
 # Secret: never commit API keys
 data/config/api_keys.json
 # Generated runtime state — the directory skeleton is kept via .gitkeep
+data/.lock
 data/journal/*
 data/snapshots/*
 data/state/*

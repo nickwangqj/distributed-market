@@ -1,0 +1,20 @@
+# Environment configuration shared by all four services.
+# Keys mirror docker-compose.yml exactly (.claude/docs/08-deployment.md §5).
+#
+# The JSON fixtures (instruments.json, accounts.seed.json) and the API-key Secret are created by
+# scripts/kind-up.sh instead of here: they live under data/config/, outside the kustomize root,
+# and `kubectl apply -k` offers no way to relax that restriction.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dm-config
+data:
+  DM_DATA_DIR: /data
+  DM_LOG_LEVEL: INFO
+  DM_ENGINE_URL: http://engine:8080
+  DM_LEDGER_URL: http://ledger:8080
+  DM_MARKETDATA_URL: http://marketdata:8080
+  DM_FSYNC_MODE: always
+  DM_SNAPSHOT_EVERY: "1000"
+  DM_BAND_REFRESH: 1s
+  DM_RESERVATION_TTL: 60s

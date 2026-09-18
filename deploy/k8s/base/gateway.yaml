@@ -1,0 +1,77 @@
+# Stateless: no volume beyond the read-only fixtures and the API-key Secret. Readiness reflects
+# peer reachability, so a pod whose engine or ledger is down leaves the Service rotation rather
+# than accepting orders it cannot place (.claude/docs/08-deployment.md §6).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  labels:
+    app.kubernetes.io/name: gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gateway
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+      containers:
+        - name: gateway
+          image: dm-gateway:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: dm-config
+          volumeMounts:
+            # One mount, two sources — see the `projected` volume below.
+            - name: config
+              mountPath: /data/config
+              readOnly: true
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+      volumes:
+        # A `projected` volume, not two mounts: /data/config is itself a volume mount, and a
+        # Secret subPath cannot be mounted inside one ("not a directory"). Projection merges the
+        # fixtures and the API keys into a single directory, which is also what keeps the
+        # documented path data/config/api_keys.json intact.
+        #
+        # Only the gateway gets the Secret — the other three services mount the fixtures alone.
+        - name: config
+          projected:
+            sources:
+              - configMap:
+                  name: dm-fixtures
+              - secret:
+                  name: dm-api-keys
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+spec:
+  selector:
+    app.kubernetes.io/name: gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

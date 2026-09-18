@@ -1,0 +1,49 @@
+# Only the gateway and market data are publicly reachable, as two distinct surfaces
+# (.claude/docs/02-api-gateway.md §12). Engine and ledger have no Ingress at all.
+#
+# Host-based rather than path-based routing, so the two surfaces keep their own path namespaces
+# and no rewriting is needed. Both hosts resolve to the kind node; clients that lack DNS entries
+# for them can pass `-H 'Host: ...'` instead, which is what scripts/smoke.sh does.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 1m
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: gateway.dm.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: marketdata
+  annotations:
+    # The WebSocket feed sends a heartbeat every 5 s (.claude/docs/07-market-data.md §3). These
+    # timeouts must stay comfortably above it: an ingress default of 60 s would silently kill
+    # idle-but-healthy connections, which is the failure Phase 10 is warned about.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: marketdata.dm.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: marketdata
+                port:
+                  number: 8080

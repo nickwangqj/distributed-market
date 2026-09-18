@@ -1,0 +1,22 @@
+# Single-node kind cluster for the outer loop (.claude/docs/08-deployment.md §8).
+#
+# The node is labelled `ingress-ready` and publishes 80/443 to the host, which is what the
+# ingress-nginx kind deployment expects. Images are side-loaded, so no registry is involved.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: distributed-market
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP

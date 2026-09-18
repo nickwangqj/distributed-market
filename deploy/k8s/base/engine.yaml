@@ -1,0 +1,101 @@
+# The engine is the one component that must never run twice (.claude/docs/08-deployment.md §4).
+# A StatefulSet gives it stable identity; OrderedReady plus the default rolling update means the
+# old pod is gone before the new one starts; the RWO volume can only mount on one node; and the
+# process itself takes an advisory flock as the last line of defence.
+#
+# NOTE the volume is a single static PVC, deliberately NOT a volumeClaimTemplate. A template
+# would give every replica its own volume, so scaling to 2 would produce two engines each with a
+# private journal and a private book — the exact fork this component is designed to make
+# impossible, arriving silently and looking healthy. Sharing one PVC means a second pod on
+# another node cannot mount it (RWO), and a second pod on the SAME node mounts it but then fails
+# to take the flock and exits. Both paths end with one engine.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: engine-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: engine
+  labels:
+    app.kubernetes.io/name: engine
+spec:
+  serviceName: engine
+  replicas: 1
+  podManagementPolicy: OrderedReady
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: engine
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: engine
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+        - name: engine
+          image: dm-engine:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: dm-config
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: fixtures
+              mountPath: /data/config
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            # Phase 7 makes readiness mean "journal replay complete", which can take a while;
+            # the generous threshold is already here so that change needs no manifest edit.
+            failureThreshold: 30
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: engine-data
+        - name: fixtures
+          configMap:
+            name: dm-fixtures
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: engine
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: engine
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

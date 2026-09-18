@@ -1,0 +1,26 @@
+# Local kind overlay: images are side-loaded with `kind load docker-image`, never pulled.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+images:
+  - name: dm-engine
+    newTag: latest
+  - name: dm-ledger
+    newTag: latest
+  - name: dm-gateway
+    newTag: latest
+  - name: dm-marketdata
+    newTag: latest
+
+patches:
+  # Without this, every pod sits in ImagePullBackOff trying to reach Docker Hub for an image
+  # that only exists on the node.
+  - target:
+      kind: StatefulSet|Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never

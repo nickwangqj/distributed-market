@@ -1,0 +1,48 @@
+# Engine and ledger accept traffic only from inside the namespace; nothing from the ingress
+# controller or elsewhere in the cluster can reach them (.claude/docs/08-deployment.md K5).
+#
+# IMPORTANT: enforcement depends on the CNI. kind's default (kindnet) does not implement
+# NetworkPolicy, so on a stock kind cluster these objects are accepted by the API server and
+# then ignored. scripts/kind-up.sh probes for this and prints whether the policies are actually
+# being enforced, so the gap is visible rather than assumed away.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: engine-internal-only
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: engine
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ledger
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: marketdata
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ledger-internal-only
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ledger
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+      ports:
+        - protocol: TCP
+          port: 8080

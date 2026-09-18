@@ -8,10 +8,13 @@ environment, and the process it runs in.
 from service_common.app import Readiness, bootstrap, create_app
 from service_common.logging import configure_logging
 from service_common.settings import Settings, load_settings
+from service_common.single_writer import DataDirectoryLocked, SingleWriterLock
 
 __all__ = [
+    "DataDirectoryLocked",
     "Readiness",
     "Settings",
+    "SingleWriterLock",
     "bootstrap",
     "configure_logging",
     "create_app",

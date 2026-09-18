@@ -69,7 +69,7 @@ src/
   gateway/         public REST API
   marketdata/      WebSocket market data service
 data/              persistence root — journal, snapshots, state, config
-deploy/k8s/        manifests (kustomize base + overlays/local)
+deploy/            Dockerfiles, Kubernetes manifests, kind config — see deploy/README.md
 tests/
 .claude/docs/      design documentation (local only, not committed)
 ```
@@ -138,14 +138,27 @@ The real deployment target. This is where probes, PVC behaviour, the single-engi
 and NetworkPolicy are actually exercised.
 
 ```bash
-make kind-up               # create cluster, load images, kubectl apply -k
+make keys                  # once: generate the git-ignored data/config/api_keys.json
+make kind-up               # create cluster, install ingress-nginx, load images, apply manifests
 kubectl -n distributed-market get pods
 make smoke TARGET=kind
 make kind-down
 ```
 
+Requires `kind` (`brew install kind`). Routing is host-based, so there is nothing to add to
+`/etc/hosts` — pass the host header instead:
+
+```bash
+curl -H 'Host: gateway.dm.local'    http://localhost/healthz
+curl -H 'Host: marketdata.dm.local' http://localhost/healthz
+```
+
 Both loops run the same smoke test. If a change passes under compose but fails under kind, the
 difference is real and worth investigating.
+
+**[`deploy/README.md`](deploy/README.md)** explains how the images, compose stack, kind cluster,
+and Kubernetes manifests fit together — including how traffic reaches the services, how the
+single-engine guarantee is enforced, and the failure modes you are most likely to hit.
 
 ### Try it by hand
 

@@ -84,12 +84,12 @@ logs: ## Tail all service logs
 # --- Outer loop: kind -----------------------------------------------------
 
 .PHONY: kind-up
-kind-up: ## Create the kind cluster, load images, apply manifests
-	$(call not_yet,kind-up,2)
+kind-up: build ## Create the kind cluster, load images, apply manifests
+	scripts/kind-up.sh
 
 .PHONY: kind-down
 kind-down: ## Delete the kind cluster
-	$(call not_yet,kind-down,2)
+	scripts/kind-down.sh
 
 # --- Operating the venue --------------------------------------------------
 
