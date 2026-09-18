@@ -63,20 +63,23 @@ test-all: ## Everything in `test`, plus the compose integration layer
 # --- Inner loop: docker compose -------------------------------------------
 
 .PHONY: build
-build: ## Build all four service images
-	$(call not_yet,build,1)
+build: ## Build the base image and all four service images
+	docker build -f deploy/docker/Dockerfile.base -t dm-base:latest .
+	docker compose build
 
 .PHONY: up
-up: ## Start the venue under docker compose
-	$(call not_yet,up,1)
+up: build ## Start the venue under docker compose
+	docker compose up -d --wait
+	@echo "gateway    http://localhost:8080"
+	@echo "marketdata http://localhost:8081"
 
 .PHONY: down
-down: ## Stop the compose stack
-	$(call not_yet,down,1)
+down: ## Stop the compose stack and remove its containers
+	docker compose down --remove-orphans
 
 .PHONY: logs
 logs: ## Tail all service logs
-	$(call not_yet,logs,1)
+	docker compose logs -f
 
 # --- Outer loop: kind -----------------------------------------------------
 
@@ -95,8 +98,8 @@ seed: ## Deposit fixture balances into the seeded accounts
 	$(call not_yet,seed,8)
 
 .PHONY: smoke
-smoke: ## Place crossing orders and assert a trade prints (TARGET=compose|kind)
-	$(call not_yet,smoke,1)
+smoke: ## Assert the venue is standing end to end (TARGET=compose|kind)
+	scripts/smoke.sh $(TARGET)
 
 .PHONY: keys
 keys: ## Generate a local data/config/api_keys.json (git-ignored)

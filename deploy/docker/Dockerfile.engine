@@ -1,0 +1,7 @@
+# engine service — see .claude/docs/
+ARG BASE_IMAGE=dm-base:latest
+FROM ${BASE_IMAGE}
+
+# The engine runs uvicorn itself rather than being launched by it: Phase 7 needs control of
+# startup (journal replay) and shutdown (drain, fsync, final snapshot) around the server.
+CMD ["python", "-m", "engine.main"]

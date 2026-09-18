@@ -1,0 +1,46 @@
+# Shared builder + runtime base for all four services (.claude/docs/08-deployment.md §2).
+#
+# Built once as `dm-base`; each service image is a thin FROM on top of it that only sets its
+# command. One dependency install, one copy of market_core, four images that cannot drift.
+
+# --- builder ---------------------------------------------------------------
+FROM python:3.12-slim AS builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /build
+
+# Dependencies resolve from pyproject alone, so this layer caches across source changes.
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
+
+RUN python -m venv /opt/venv \
+    && /opt/venv/bin/pip install --quiet --upgrade pip \
+    && /opt/venv/bin/pip install --quiet .
+
+# --- runtime ---------------------------------------------------------------
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    DM_DATA_DIR=/data
+
+# Installed into site-packages, not editable: nothing needs to be writable at runtime, which is
+# what lets the container run with a read-only root filesystem.
+COPY --from=builder /opt/venv /opt/venv
+
+RUN groupadd --system --gid 1001 dm \
+    && useradd --system --uid 1001 --gid dm --no-create-home dm \
+    && mkdir -p /data \
+    && chown dm:dm /data
+
+USER dm
+WORKDIR /app
+EXPOSE 8080
+
+# Probes use urllib from the interpreter we already have; the slim image ships no curl.
+HEALTHCHECK --interval=5s --timeout=3s --start-period=5s --retries=5 \
+    CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).status == 200 else 1)"]

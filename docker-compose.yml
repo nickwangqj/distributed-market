@@ -1,0 +1,78 @@
+# Inner loop (.claude/docs/08-deployment.md §8). The Kubernetes manifests in deploy/k8s are the
+# deployment target; this file is the fast path for writing the code that runs there.
+#
+# Env vars mirror the ConfigMap keys exactly, so compose and Kubernetes stay interchangeable.
+# Defaults are inline, so `make up` works with no .env at all; copy .env.example to .env to
+# override.
+
+x-service: &service
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp
+  environment: &env
+    DM_LOG_LEVEL: ${DM_LOG_LEVEL:-INFO}
+    DM_DATA_DIR: /data
+    DM_ENGINE_URL: http://engine:8080
+    DM_LEDGER_URL: http://ledger:8080
+    DM_MARKETDATA_URL: http://marketdata:8080
+    DM_FSYNC_MODE: ${DM_FSYNC_MODE:-always}
+    DM_SNAPSHOT_EVERY: ${DM_SNAPSHOT_EVERY:-1000}
+    DM_BAND_REFRESH: ${DM_BAND_REFRESH:-1s}
+    DM_RESERVATION_TTL: ${DM_RESERVATION_TTL:-60s}
+
+services:
+  engine:
+    <<: *service
+    image: dm-engine:latest
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.engine
+    volumes:
+      # The engine owns the journal, snapshots and order state; bind-mounted from the repo so a
+      # run's journal is inspectable with jq in the working tree.
+      - ./data:/data
+
+  ledger:
+    <<: *service
+    image: dm-ledger:latest
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.ledger
+    volumes:
+      - ./data:/data
+    depends_on:
+      engine:
+        condition: service_healthy
+
+  gateway:
+    <<: *service
+    image: dm-gateway:latest
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.gateway
+    ports:
+      - "8080:8080"
+    volumes:
+      # Config only, read-only: the gateway reads api_keys.json and instruments.json and writes
+      # nothing.
+      - ./data/config:/data/config:ro
+    depends_on:
+      engine:
+        condition: service_healthy
+      ledger:
+        condition: service_healthy
+
+  marketdata:
+    <<: *service
+    image: dm-marketdata:latest
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.marketdata
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./data/config:/data/config:ro
+    depends_on:
+      engine:
+        condition: service_healthy

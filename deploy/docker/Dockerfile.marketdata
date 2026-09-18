@@ -1,0 +1,7 @@
+# marketdata service — see .claude/docs/
+ARG BASE_IMAGE=dm-base:latest
+FROM ${BASE_IMAGE}
+
+# service_common installs JSON logging at import time and takes uvicorn's loggers over, so
+# uvicorn's own config is left alone here rather than disabled with a flag.
+CMD ["uvicorn", "marketdata.main:app", "--host", "0.0.0.0", "--port", "8080"]
