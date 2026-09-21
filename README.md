@@ -1,91 +1,88 @@
 # distributed-market
 
 A distributed foreign-exchange trading venue for **USD/CAD**, built as four Python services in
-containers on Kubernetes. It runs a central limit order book with a deterministic matching
-engine, tracks per-account balances with fund reservation, and publishes live market data over
-WebSocket.
+containers on Kubernetes. Persistence is plain JSON files rather than a database, and the whole
+venue is meant to run on a laptop.
 
-> **Status: design complete, implementation not started.**
-> The architecture is settled and every open question is answered; no service code exists yet.
-> The commands below describe the intended workflow and will work as each phase lands — see
-> *Project status* at the bottom for where things actually stand.
+> **Status: under construction.** The design is complete and the deployment is built and proven,
+> but **no trading logic exists yet** — the four services are health-probe stubs. This README
+> describes only what works today. See *What exists today* below for the exact boundary.
 
-Built to the shape of a real exchange, deliberately not to the scale of one: persistence is
-plain JSON files rather than a database, and the whole venue is meant to run on a laptop.
+## What exists today
 
-## What it does
+- **Four containerized services** — `engine`, `ledger`, `gateway`, `marketdata` — deployed two
+  ways: a docker compose stack for fast iteration, and a kind cluster running the real
+  Kubernetes manifests. They currently serve health probes and nothing else.
+- **`market_core`**, the shared domain library: order and event types, integer money arithmetic,
+  the instrument config loader, the error taxonomy, and ULID generation. Fully implemented and
+  tested; nothing consumes it at runtime yet.
+- **The single-engine guarantee**, enforced and tested end to end: a second engine pod cannot
+  run, verified on a live cluster.
+- **A test suite** — 102 tests covering `market_core`, plus a smoke test that runs against both
+  deployment loops.
 
-- **Central limit order book** for USD/CAD with strict price-time (FIFO) priority
-- **Limit and market orders**, with `GTC` and `IOC` time in force
-- **Deterministic matching engine** — replaying its journal reproduces state exactly
-- **Accounts with fund reservation** — an order is collateralized before it can trade, so a fill
-  can never fail to settle
-- **Self-trade prevention** — an account never trades with itself
-- **Live market data** — sequenced L2 book deltas, trade prints, and a throttled ticker
-- **Crash-safe JSON persistence** — append-only journal plus periodic snapshots
-- **Container-native** — each component is its own image, its own Deployment, independently
-  restartable
+Not built yet: the order book, the matching engine, balances and reservations, the REST order
+API, and the market-data feed.
 
 ## Architecture
 
 ```
                     ┌──────────────┐
-   REST  ──────────►│ API Gateway  │──── reserve/release ────►┌───────────────┐
-   (order entry)    │   (N pods)   │                          │ Account       │
+   REST ───────────►│ API Gateway  │───── health probes ─────►┌───────────────┐
+                    │   (2 pods)   │                          │ Account       │
                     └──────┬───────┘                          │ Ledger        │
-                           │ submit / cancel                  │  (1 pod)      │
-                           ▼                                  └───────▲───────┘
+                           │ health probes                    │  (1 pod)      │
+                           ▼                                  └───────┬───────┘
                     ┌──────────────┐                                  │
-                    │  Matching    │───── trade events (SSE) ─────────┘
-                    │  Engine      │
-                    │  (1 pod)     │───── event stream (SSE) ►┌───────────────┐
-                    │  order book  │                          │ Market Data   │◄── WebSocket
-                    └──────┬───────┘                          │  (N pods)     │     clients
-                           │ journal + snapshots              └───────────────┘
+                    │  Matching    │                                  │
+                    │  Engine      │                          ┌───────────────┐
+                    │  (1 pod)     │                          │ Market Data   │◄── HTTP
+                    └──────┬───────┘                          │  (2 pods)     │
+                           │                                  └───────────────┘
                            ▼
                     ┌──────────────┐
-                    │  JSON files  │  (PVC)
+                    │  JSON files  │  (PVC — currently a heartbeat and a lock file)
                     └──────────────┘
 ```
 
-One authoritative engine owns the book; everything around it is stateless or derived. The
-engine is the single serialization point — it assigns sequence numbers, journals every event
-before acknowledging it, and publishes the stream the ledger and market-data service consume.
+One authoritative engine will own the order book; everything around it is stateless or derived.
+That topology is already deployed — what is missing is the behaviour inside each box.
 
-| Service | Replicas | State |
-|---------|----------|-------|
-| `gateway` | N | none — any pod serves any request |
-| `engine` | **1** | owns the order book and the journal |
-| `ledger` | 1 | owns account balances |
-| `marketdata` | N | derived only; disposable |
+| Service | Replicas | State | Does today |
+|---------|----------|-------|------------|
+| `gateway` | 2 | none | Reports ready only while the engine and ledger are both reachable |
+| `engine` | **1** | owns its volume | Holds the data-directory lock, writes a heartbeat file |
+| `ledger` | 1 | owns its volume | Health probes |
+| `marketdata` | 2 | none | Health probes |
 
 ## Repository layout
 
 ```
 src/
-  market_core/     shared library: types, money, events (vendored, not published)
-  engine/          matching engine service
-  ledger/          account ledger service
-  gateway/         public REST API
-  marketdata/      WebSocket market data service
+  market_core/     shared domain library — types, money, events, errors  (implemented)
+  service_common/  settings, JSON logging, health-app factory            (implemented)
+  engine/          matching engine service                               (stub)
+  ledger/          account ledger service                                (stub)
+  gateway/         public REST API                                       (stub)
+  marketdata/      market data service                                   (stub)
 data/              persistence root — journal, snapshots, state, config
 deploy/            Dockerfiles, Kubernetes manifests, kind config — see deploy/README.md
+scripts/           smoke test, cluster lifecycle, verification probes
 tests/
-.claude/docs/      design documentation (local only, not committed)
 ```
 
 ## Prerequisites
 
-| Tool | Version | Notes |
-|------|---------|-------|
-| Python | 3.11+ | 3.12 in the container images |
-| Docker | any recent | builds images; also runs the compose inner loop |
-| [kind](https://kind.sigs.k8s.io/) | 0.20+ | local Kubernetes cluster |
-| `kubectl` | matching your kind node image | |
-| `make` | GNU make | preinstalled on macOS and Linux |
+| Tool | Version | Needed for |
+|------|---------|-----------|
+| Python | 3.11+ | tests and tooling (3.12 in the container images) |
+| Docker | any recent | building images; the compose loop |
+| [kind](https://kind.sigs.k8s.io/) | 0.30+ | the local Kubernetes cluster |
+| `kubectl` | 1.30+ | talking to that cluster |
+| `make` | GNU make | everything below |
 
-No cloud account and no container registry are needed — images are built locally and side-loaded
-into the cluster.
+No cloud account and no container registry are required — images are built locally and
+side-loaded into the cluster.
 
 ## Getting started
 
@@ -94,25 +91,19 @@ git clone <this repo> && cd distributed-market
 
 make venv            # create .venv and install the project with dev extras
 source .venv/bin/activate
-make lint typecheck  # ruff + mypy
-make test            # unit, property, replay, and service layers — fast
+make lint typecheck  # ruff + mypy (strict)
+make test            # 102 tests, about a second
 ```
 
 `make help` lists every target.
 
 ### Configuration you need locally
 
-`data/config/api_keys.json` holds API-key hashes and is **git-ignored** — create it before
-running the services:
+`data/config/api_keys.json` holds API-key hashes and is **git-ignored**. Generate it from the
+seeded accounts:
 
 ```bash
-python - <<'PY'
-import hashlib, json, pathlib
-key = "sk_test_alice"
-pathlib.Path("data/config/api_keys.json").write_text(
-    json.dumps({"sha256:" + hashlib.sha256(key.encode()).hexdigest(): "acct_0001"}, indent=2))
-print("wrote data/config/api_keys.json for key:", key)
-PY
+make keys      # writes data/config/api_keys.json for sk_test_alice / sk_test_bob
 ```
 
 `data/config/instruments.json` and `data/config/accounts.seed.json` are committed and need no
@@ -120,127 +111,134 @@ setup. Everything else under `data/` is generated at runtime and ignored by git.
 
 ### Inner loop — docker compose (seconds)
 
-Fast iteration on service logic and the API contract. `data/` is bind-mounted from the repo, so
-the journal is inspectable with `jq` in your working tree.
-
 ```bash
-make build           # build all four images
-make up              # start gateway, engine, ledger, marketdata
-make seed            # deposit fixture balances into the seeded accounts
-make smoke           # place crossing orders, assert a trade prints
+make build           # build the base image and all four service images
+make up              # start the four services
+make smoke           # assert the venue is standing
 make logs            # tail all services
 make down
 ```
 
 ### Outer loop — kind (1–2 minutes)
 
-The real deployment target. This is where probes, PVC behaviour, the single-engine guarantee,
-and NetworkPolicy are actually exercised.
+The real deployment target: probes, volumes, ingress, NetworkPolicy, and the single-engine
+guarantee.
 
 ```bash
-make keys                  # once: generate the git-ignored data/config/api_keys.json
 make kind-up               # create cluster, install ingress-nginx, load images, apply manifests
 kubectl -n distributed-market get pods
 make smoke TARGET=kind
 make kind-down
 ```
 
-Requires `kind` (`brew install kind`). Routing is host-based, so there is nothing to add to
-`/etc/hosts` — pass the host header instead:
+Routing is host-based, so there is nothing to add to `/etc/hosts` — pass the header instead:
 
 ```bash
 curl -H 'Host: gateway.dm.local'    http://localhost/healthz
-curl -H 'Host: marketdata.dm.local' http://localhost/healthz
+curl -H 'Host: marketdata.dm.local' http://localhost/version
 ```
-
-Both loops run the same smoke test. If a change passes under compose but fails under kind, the
-difference is real and worth investigating.
 
 **[`deploy/README.md`](deploy/README.md)** explains how the images, compose stack, kind cluster,
 and Kubernetes manifests fit together — including how traffic reaches the services, how the
 single-engine guarantee is enforced, and the failure modes you are most likely to hit.
 
-### Try it by hand
+## What the services expose
 
-```bash
-# place a limit order
-curl -s localhost:8080/v1/orders \
-  -H 'X-API-Key: sk_test_alice' -H 'content-type: application/json' \
-  -d '{"client_order_id":"alice-001","symbol":"USDCAD","side":"BUY",
-       "type":"LIMIT","time_in_force":"GTC","price":"1.37500","quantity":"1000.00"}'
+Every service serves the same three endpoints, on port 8080. There are no other routes yet.
 
-curl -s localhost:8080/v1/book?depth=5      # aggregated L2 snapshot
-curl -s localhost:8080/v1/accounts/me -H 'X-API-Key: sk_test_alice'
+| Endpoint | Returns |
+|----------|---------|
+| `GET /healthz` | Liveness — is the process up |
+| `GET /readyz` | Readiness — can it serve; 503 with a reason when it cannot |
+| `GET /version` | Service name, version, and the phase it is built to |
 
-# stream market data (market data has its own ingress; the gateway is REST-only)
-websocat ws://localhost:8081/ws <<< '{"op":"subscribe","channels":["book:USDCAD","trades:USDCAD"]}'
+Under compose the gateway is on `localhost:8080` and market data on `localhost:8081`.
+
+The gateway's readiness check is real: it probes the engine and the ledger concurrently and goes
+unready when either is down. `make smoke` proves this by stopping the ledger and asserting
+readiness actually flips — a health check that cannot fail is worse than none.
+
+## `market_core`
+
+The shared library every service will build on. Pure domain logic: no I/O beyond reading a
+config file, no framework imports.
+
+| Module | Provides |
+|--------|----------|
+| `enums` | `Side`, `OrderType`, `TimeInForce`, `OrderStatus`, `CancelReason` |
+| `units` | Integer money arithmetic, the notional rounding rule, wire parsing and formatting |
+| `orders` | The immutable `Order` record and its lifecycle transitions |
+| `events` | The six engine event records and their journal round trip |
+| `instruments` | Instrument config loading, quantity/price/band validation |
+| `errors` | The error taxonomy and its HTTP mapping |
+| `ids` | ULID generation, injectable id generators |
+| `clock` | Injectable time, so nothing depends on the wall clock |
+
+```python
+from market_core import Side, notional_cad
+
+notional_cad(100, 137_500, Side.BUY)   # 138 — the taker pays the extra half cent
+notional_cad(100, 137_500, Side.SELL)  # 137 — the taker forgoes it
 ```
 
 ## Testing
 
 ```bash
-make test        # unit + property + replay + service layers  (fast, every save)
-make test-all    # adds the docker compose integration and fault-injection layers
+make test        # unit and property tests
+make smoke       # compose deployment
+make smoke TARGET=kind
 ```
 
-| Layer | What it proves |
-|-------|----------------|
-| Unit | `market_core`, book operations, the pure matching function |
-| Property (Hypothesis) | Invariants over randomized order flow — see below |
-| Replay | Journal → identical state; snapshot + tail == full replay |
-| Service | One FastAPI app against fakes, via `httpx` ASGI transport |
-| Integration | All four services under compose, including fault injection |
-| Cluster smoke | kind deployment end to end |
+Property tests use Hypothesis over randomized inputs. What is asserted today:
 
-The invariants that matter most, asserted after *every* command in property tests:
+- Notional rounding is never more than half a cent from exact, and the two sides differ by at
+  most one cent — side only ever decides a tie.
+- The market-buy affordability clamp never permits overspending its reservation.
+- An order record cannot be constructed in an illegal state, and a self-trade cannot be
+  constructed at all.
+- Orders and events survive a journal round trip exactly.
 
-- The book is never crossed
-- Quantity is conserved: `filled + remaining + cancelled == original`
-- **Money is conserved** — total USD and CAD across all accounts never change from trading
-- Balances never go negative; `0 <= reserved <= total`
-- Price-time priority holds; IOC orders never rest; no account ever trades with itself
-- Replaying the journal reproduces state exactly
+Two verification scripts assert properties only a live cluster can show:
 
-CI runs everything through the compose integration layer on every commit, budgeted under five
-minutes. The kind smoke test runs on manifest changes and nightly.
+```bash
+scripts/check-single-engine.sh    # a second engine pod must refuse to start
+scripts/check-networkpolicy.sh    # is NetworkPolicy actually enforced by this CNI?
+```
 
-## Key configuration
+Both run as part of `make smoke TARGET=kind`.
+
+## Configuration
+
+Read from the environment; the same keys are used by compose and by the Kubernetes ConfigMap.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `DM_DATA_DIR` | `./data` locally, `/data` in-cluster | Persistence root |
-| `DM_FSYNC_MODE` | `always` | `interval` / `never` for tests only |
-| `DM_SNAPSHOT_EVERY` | `1000` events | Snapshot cadence |
-| `DM_BAND_REFRESH` | `1s` | Price-band reference refresh |
-| `DM_RESERVATION_TTL` | `60s` | Orphaned-reservation reaper threshold |
 | `DM_LOG_LEVEL` | `INFO` | Structured JSON logs to stdout |
+| `DM_PORT` | `8080` | Listen port |
+| `DM_ENGINE_URL` | `http://engine:8080` | Peer address, used by the gateway's readiness check |
+| `DM_LEDGER_URL` | `http://ledger:8080` | Peer address, used by the gateway's readiness check |
+| `DM_MARKETDATA_URL` | `http://marketdata:8080` | Peer address |
 
-## Design notes worth knowing
+`DM_FSYNC_MODE`, `DM_SNAPSHOT_EVERY`, `DM_BAND_REFRESH` and `DM_RESERVATION_TTL` are also parsed
+and carried through the config, but nothing consumes them yet — they belong to components that
+are not built.
+
+## Design principles in the code today
 
 - **Money is integers, never floats.** USD and CAD in cents, price in ticks of 0.00001 CAD per
   USD. A trade's notional rounds to the nearest cent with ties against the taker, and the same
   single value moves between both accounts — so rounding decides who absorbs the sub-cent, never
   whether cents appear or vanish.
-- **Reserve, then trade.** The gateway secures collateral from the ledger before the engine sees
-  the order. This is what removes any need for distributed transactions between services.
-- **The engine is single-threaded and single-replica by design.** Determinism is worth more than
-  throughput here; the journal is what a future replicated design would build on.
-- **Balances are eventually consistent.** A balance read can lag a fill by one stream hop;
-  responses carry `last_applied_seq` so a client can poll until its order is reflected. The
-  reservation — not the balance — is what guarantees correctness.
+- **Deployment first.** The containers and the cluster were built and proven around stub
+  services, before any trading logic, so the plumbing was debugged while it was trivial.
+- **One engine, defended four ways.** A StatefulSet with one replica, a no-surge rollout, a
+  ReadWriteOnce volume, and an advisory `flock` the process takes at startup. On a single-node
+  cluster only the lock actually bites, which is why it exists.
+- **Injected clock and id generator.** No test depends on the wall clock or on randomness.
 
-## Project status
+## Design documentation
 
-Design is closed: ten documents, every open question answered. Implementation is tracked in
-eleven phases, each with exit criteria.
-
-Because `.claude/` is git-ignored, the design docs and the progress tracker live only in the
-working copy:
-
-| | |
-|---|---|
-| Design docs | `.claude/docs/` — start with `README.md` (index + full decision log) |
-| Progress tracker | `.claude/docs/10-implementation-progress.md` — current phase, session log, parked items |
-
-**Not in this phase:** additional currency pairs, replicated or sharded matching, fees, margin,
-real authentication or settlement, stop and iceberg orders, `FOK`/`GTD`.
+The full design — ten documents covering every component, with the decision log — lives in
+`.claude/docs/`. That directory is git-ignored, so it exists only in a working copy, not in a
+fresh clone. `deploy/README.md` is committed and covers the deployment stack in full.
